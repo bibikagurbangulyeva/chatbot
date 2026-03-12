@@ -32,6 +32,7 @@ const userId = localStorage.getItem("uid") || crypto.randomUUID();
 localStorage.setItem("uid", userId);
 let sessionId = null;
 let messageSeq = 0;
+let chatHistory = [];
 
 
 //Chats Mode
@@ -61,29 +62,33 @@ function updateFooterVisibility() {
 //     chatBody.scrollTo({ top: chatBody.scrollHeight, behavior: "smooth" });
 //   }
   
-  const Keys =[
-    "AIzaSyCduAu5pYp6jJGEEBhBH50JY41wdzaeY-U",
-    "AIzaSyB0SeFjeq3GpBUd-wn61B7g-8I9kMyMMFU",
-    "AIzaSyDQfgFNJFOEbjc4-2seBsugfSmzG6BZJKM",
-    "AIzaSyBcoytQ6wwEvJ8MB_8jdpx-LjJCa2uCRNM",
-    "AIzaSyDEGmQLEF-Gv1NuZmTIQXbQ9CxCb6Ocw2o"
-  ]
+  // const Keys =[
+  //   "AIzaSyCduAu5pYp6jJGEEBhBH50JY41wdzaeY-U",
+  //   "AIzaSyB0SeFjeq3GpBUd-wn61B7g-8I9kMyMMFU",
+  //   "AIzaSyDQfgFNJFOEbjc4-2seBsugfSmzG6BZJKM",
+  //   "AIzaSyBcoytQ6wwEvJ8MB_8jdpx-LjJCa2uCRNM",
+  //   "AIzaSyDEGmQLEF-Gv1NuZmTIQXbQ9CxCb6Ocw2o",
+  //   "AIzaSyBsxracRxyAhhb9Cs8EQ1nWD65WX-ekoF0"
+  // ]
 
-  let geminiKeyIndex = 0;
+  // let geminiKeyIndex = 0;
 
+  // function getGeminiUrl(){
+  //   const key = Keys[geminiKeyIndex];
+  //   return `https://generativelanguage.googleapis.com/v1beta/models/gemini-3-flash-preview:generateContent?key=${encodeURIComponent(key)}`;
+  // }
   function getGeminiUrl(){
-    const key = Keys[geminiKeyIndex];
-    return `https://generativelanguage.googleapis.com/v1beta/models/gemini-3-flash-preview:generateContent?key=${encodeURIComponent(key)}`;
+    return "./chat.php";
   }
 
-  function isQuotaError(status, data) {
-    const msg = (data && data.error && data.error.message) ? String(data.error.message) : "";
-    return (
-      status === 429 || // Too Many Requests / quota
-      status === 403 || // Forbidden (часто квота/лимиты/нет доступа)
-      /quota|rate|limit|leaked|exceed|RESOURCE_EXHAUSTED/i.test(msg)
-    );
-  }
+  // function isQuotaError(status, data) {
+  //   const msg = (data && data.error && data.error.message) ? String(data.error.message) : "";
+  //   return (
+  //     status === 429 || // Too Many Requests / quota
+  //     status === 403 || // Forbidden (часто квота/лимиты/нет доступа)
+  //     /quota|rate|limit|leaked|exceed|RESOURCE_EXHAUSTED/i.test(msg)
+  //   );
+  // }
 
 //Api Setup
 // AIzaSyDUSq8LooL_oj4ppsUvqK_nxVgPRi9H-HE
@@ -120,18 +125,31 @@ const createMessageElement = (content, ...classes) => {
 
 function buildPrompt(requestType, userMessage) {
     const type = requestType === "support" ? "SUPPORT" : "CONSULTATION";
+    const historyText = chatHistory
+    .slice(-6)
+    .map(item => `${item.role === "user" ? "Пользователь" : "Бот"}: ${item.text}`)
+    .join("\n");
   
     return `
   Ты консультант зоомагазина. Тип: ${type}.
   Отвечай Быстро и коротко (1–2 предложения), дружелюбно, с 1 уточняющим вопросом.
+  Правила общения:
+- Здоровайся только в самом первом сообщении диалога.
+- Продолжай разговор по текущему вопросу пользователя.
+- Не пиши длинные фразы.
+- Отвечай коротко и по делу.
+
   Запрещено: цены/наличие/оформление заказа/оплата/медицинские советы.
   
-  Если Request type = CONSULTATION: Ты консультант по зоотоварам. обязательно упоминай, что это не ветеринарная консультация. не давай медицинских советов.
+  Если Request type = CONSULTATION: Ты консультант по зоотоварам. упоминай, что это не ветеринарная консультация. не давай медицинских советов.
   Если Request type = SUPPORT: Ты служба поддержки. Разрешённые темы: Где мой заказ, Как оформить заказ, Как отменить заказ, Проблема с оплатой.
 
   Если вопрос вне этих тем, предложи выбрать одну из разрешённых тем.
   Если пользователь завершает диалог — добавь на новой строке: [END_SESSION].
   
+  История диалога:
+  ${historyText || "Истории пока нет."}
+
   Сообщение: ${userMessage}
   `.trim();
   }
@@ -161,81 +179,64 @@ const generateBotResponse = async (incomingMessageDiv) => {
     };
   
     try {
-      if (!Array.isArray(Keys) || Keys.length === 0) {
-        throw new Error("Keys пустой. Добавь хотя бы 1 ключ.");
-      }
-  
-      let lastQuotaMessage = "";
-  
-      for (let attempt = 0; attempt < Keys.length; attempt++) {
+      
         const url = getGeminiUrl();
-  
+      
         let response, data;
         try {
           response = await fetch(url, requstOptions);
           data = await response.json().catch(() => ({}));
         } catch (netErr) {
-          // Сетевая ошибка (CORS/Failed to fetch) — смена ключа НЕ поможет
-          throw new Error("Failed to fetch (возможен CORS/блокировка браузером).");
+          throw new Error("Failed to fetch.");
         }
-  
-        if (response.ok) {
-          const apiResponseText = String(
-            data?.candidates?.[0]?.content?.parts?.[0]?.text || ""
-          ).replace(/\*\*(.*?)\*\*/g, "$1").trim();
-  
-          const isEndSession = apiResponseText.includes("[END_SESSION]");
-          const cleanText = apiResponseText.replace("[END_SESSION]", "").trim();
-  
-          messagaElement.style.color = "";
-          messagaElement.innerText = cleanText;
-  
+      
+        if (!response.ok) {
+          throw new Error(data?.error?.message || `HTTP ${response.status}`);
+        }
+      
+        const apiResponseText = String(
+          data?.candidates?.[0]?.content?.parts?.[0]?.text || ""
+        ).replace(/\*\*(.*?)\*\*/g, "$1").trim();
+      
+        const isEndSession = apiResponseText.includes("[END_SESSION]");
+        const cleanText = apiResponseText.replace("[END_SESSION]", "").trim();
+        chatHistory.push({
+          role: "bot",
+          text: cleanText
+        });
+        
+        if (chatHistory.length > 12) {
+          chatHistory = chatHistory.slice(-12);
+        }
+      
+        messagaElement.style.color = "";
+        messagaElement.innerText = cleanText || "Нет ответа от модели.";
+      
+        sendToSheet({
+          type: "message",
+          session_id: sessionId,
+          seq: ++messageSeq,
+          role: "bot",
+          text: cleanText,
+          created_at: formatDateTime()
+        });
+      
+        if (isEndSession) {
           sendToSheet({
-            type: "message",
+            type: "session_end",
             session_id: sessionId,
-            seq: ++messageSeq,
-            role: "bot",
-            text: cleanText,
-            created_at: formatDateTime()
+            ended_at: formatDateTime()
           });
-  
-          if (isEndSession) {
-            sendToSheet({
-              type: "session_end",
-              session_id: sessionId,
-              ended_at: formatDateTime()
-            });
-  
-            setTimeout(() => {
-              mode = "post_anketa";
-              postIndex = 0;
-              addBotMessage("Перед завершением ответьте, пожалуйста, на несколько вопросов.");
-              updateFooterVisibility();
-              showNextQuestion();
-            }, 700);
-          }
-  
-          return; // успех — выходим
+      
+          setTimeout(() => {
+            mode = "post_anketa";
+            postIndex = 0;
+            addBotMessage("Перед завершением ответьте, пожалуйста, на несколько вопросов.");
+            updateFooterVisibility();
+            showNextQuestion();
+          }, 700);
         }
-  
-        // лимит/квота => переключаем ключ и пробуем следующий
-        if (isQuotaError(response.status, data)) {
-          lastQuotaMessage = data?.error?.message || `HTTP ${response.status}`;
-          geminiKeyIndex = (geminiKeyIndex + 1) % Keys.length;
-  
-          // если ещё есть ключи — пробуем дальше
-          continue;
-        }
-  
-        // прочая ошибка — не крутим ключи, показываем ошибку
-        throw new Error(data?.error?.message || `HTTP ${response.status}`);
-      }
-  
-      // Все ключи уперлись в лимит
-      messagaElement.style.color = "#ff0000";
-      messagaElement.innerText =
-        "Лимит запросов исчерпан. Я переключила ключ, но сейчас все ключи в лимите. Повторите запрос позже.\n" +
-        (lastQuotaMessage ? `\n${lastQuotaMessage}` : "");
+      
     } catch (error) {
       console.log(error);
       messagaElement.style.color = "#ff0000";
@@ -253,6 +254,14 @@ const handleOutgoingMessage = (e) => {
     console.count("handleOutgoingMessage()");
     e.preventDefault();
     userData.message = messageInput.value.trim();
+    chatHistory.push({
+      role: "user",
+      text: userData.message
+    });
+    
+    if (chatHistory.length > 12) {
+      chatHistory = chatHistory.slice(-12);
+    }
     messageInput.value = "";
     fileUploadWrapper.classList.remove("file-uploaded")
     messageInput.dispatchEvent(new Event("input"));
@@ -377,6 +386,7 @@ startDialog.addEventListener("click", async () => {
     
     sessionId = crypto.randomUUID(); 
     messageSeq = 0;
+    chatHistory = [];
 
     sendToSheet({
         type: "session_start",
