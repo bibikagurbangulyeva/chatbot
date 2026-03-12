@@ -1,4 +1,4 @@
-const SHEET_API = "https://script.google.com/macros/s/AKfycbxustPWOV-n6sNRP9ny62HGziBr01SkGLMbmRuiO7VXHdlFDpAhuW-ypbsfTCcm4_GL/exec";
+const SHEET_API = "https://script.google.com/macros/s/AKfycbxQH2pTrmdSejFN1TnnHbUY0BkHjKUz9seoI3FMtMFamPcx0WfO8FQo-2z9YIJD-R1V/exec";
 
 async function sendToSheet(payload){
     try{
@@ -61,16 +61,41 @@ function updateFooterVisibility() {
 //     chatBody.scrollTo({ top: chatBody.scrollHeight, behavior: "smooth" });
 //   }
   
-  
+  const Keys =[
+    "AIzaSyCduAu5pYp6jJGEEBhBH50JY41wdzaeY-U",
+    "AIzaSyB0SeFjeq3GpBUd-wn61B7g-8I9kMyMMFU",
+    "AIzaSyDQfgFNJFOEbjc4-2seBsugfSmzG6BZJKM",
+    "AIzaSyBcoytQ6wwEvJ8MB_8jdpx-LjJCa2uCRNM",
+    "AIzaSyDEGmQLEF-Gv1NuZmTIQXbQ9CxCb6Ocw2o"
+  ]
+
+  let geminiKeyIndex = 0;
+
+  function getGeminiUrl(){
+    const key = Keys[geminiKeyIndex];
+    return `https://generativelanguage.googleapis.com/v1beta/models/gemini-3-flash-preview:generateContent?key=${encodeURIComponent(key)}`;
+  }
+
+  function isQuotaError(status, data) {
+    const msg = (data && data.error && data.error.message) ? String(data.error.message) : "";
+    return (
+      status === 429 || // Too Many Requests / quota
+      status === 403 || // Forbidden (часто квота/лимиты/нет доступа)
+      /quota|rate|limit|leaked|exceed|RESOURCE_EXHAUSTED/i.test(msg)
+    );
+  }
 
 //Api Setup
 // AIzaSyDUSq8LooL_oj4ppsUvqK_nxVgPRi9H-HE
 // AIzaSyClPvIF7k4QjJNrblTvlMHwKrhSe2eV0xM
-const API_Key = "AIzaSyClPvIF7k4QjJNrblTvlMHwKrhSe2eV0xM";
-const  API_URL = `https://generativelanguage.googleapis.com/v1beta/models/gemini-3-flash-preview:generateContent?key=${API_Key}`;
-// const API_URL_STREAM =
-//   `https://generativelanguage.googleapis.com/v1beta/models/gemini-3-flash-preview:streamGenerateContent?alt=sse&key=${API_Key}`;
 
+// 1 AIzaSyDQfgFNJFOEbjc4-2seBsugfSmzG6BZJKM
+// 2 AIzaSyBcoytQ6wwEvJ8MB_8jdpx-LjJCa2uCRNM
+
+//last-1  AIzaSyCduAu5pYp6jJGEEBhBH50JY41wdzaeY-U
+// last-2 AIzaSyB0SeFjeq3GpBUd-wn61B7g-8I9kMyMMFU
+// const API_Key = "AIzaSyCduAu5pYp6jJGEEBhBH50JY41wdzaeY-U";
+// const  API_URL = `https://generativelanguage.googleapis.com/v1beta/models/gemini-3-flash-preview:generateContent?key=${API_Key}`;
 
 
 
@@ -98,8 +123,11 @@ function buildPrompt(requestType, userMessage) {
   
     return `
   Ты консультант зоомагазина. Тип: ${type}.
-  Отвечай коротко (1–4 предложения), дружелюбно, с 1 уточняющим вопросом.
+  Отвечай Быстро и коротко (1–2 предложения), дружелюбно, с 1 уточняющим вопросом.
   Запрещено: цены/наличие/оформление заказа/оплата/медицинские советы.
+  
+  Если Request type = CONSULTATION: Ты консультант по зоотоварам. обязательно упоминай, что это не ветеринарная консультация. не давай медицинских советов.
+  Если Request type = SUPPORT: Ты служба поддержки. Разрешённые темы: Где мой заказ, Как оформить заказ, Как отменить заказ, Проблема с оплатой.
 
   Если вопрос вне этих тем, предложи выбрать одну из разрешённых тем.
   Если пользователь завершает диалог — добавь на новой строке: [END_SESSION].
@@ -112,49 +140,57 @@ function buildPrompt(requestType, userMessage) {
 const generateBotResponse = async (incomingMessageDiv) => {
     console.count("generateBotResponse()");
     if (mode !== "chat") {
-        incomingMessageDiv.remove(); // убираем thinking сообщение
-        return; // НЕ отправляем в Gemini
+      incomingMessageDiv.remove();
+      return;
     }
-    
-    const messagaElement = incomingMessageDiv.querySelector(".message-text"); 
-
-    //API requset option
+  
+    const messagaElement = incomingMessageDiv.querySelector(".message-text");
+  
     const requstOptions = {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({
-            contents: [{
-                parts: [{ 
-                    text: buildPrompt(requestType, userData.message)
-//                   
-
-                }, ...(userData.file.data ? [{ inline_data: userData.file}] : [])]
-            }
-        ],
-        generationConfig: {
-            temperature: 0.8}        
-        })
-    }
-
-    try{
-        //proverka mode
-        // if (mode !== "chat") {
-        //     messagaElement.innerText = "Сначала нужно пройти короткую анкету.";
-        //     startDialog.classList.add("pulse"); setTimeout(() => remove, 1200);
-        //     return;
-        //   }
-        //fetch bot response from API
-        const response = await fetch(API_URL, requstOptions)
-        const data = await response.json();
-        if(!response.ok) throw new Error(data.error.message);
-
-        //Extract and display bots response text 
-        const apiResponseText = data.candidates[0].content.parts[0].text.replace(/\*\*(.*?)\*\*/g, "$1").trim();
-        const isEndSession = apiResponseText.includes("[END_SESSION]");
-        const cleanText = apiResponseText.replace("[END_SESSION]", "").trim();
-        // messagaElement.innerText = apiResponseText;
-        messagaElement.innerText = cleanText; 
-        sendToSheet({
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        contents: [{
+          parts: [
+            { text: buildPrompt(requestType, userData.message) },
+            ...(userData.file?.data ? [{ inline_data: userData.file }] : [])
+          ]
+        }],
+        generationConfig: { temperature: 0.8 }
+      })
+    };
+  
+    try {
+      if (!Array.isArray(Keys) || Keys.length === 0) {
+        throw new Error("Keys пустой. Добавь хотя бы 1 ключ.");
+      }
+  
+      let lastQuotaMessage = "";
+  
+      for (let attempt = 0; attempt < Keys.length; attempt++) {
+        const url = getGeminiUrl();
+  
+        let response, data;
+        try {
+          response = await fetch(url, requstOptions);
+          data = await response.json().catch(() => ({}));
+        } catch (netErr) {
+          // Сетевая ошибка (CORS/Failed to fetch) — смена ключа НЕ поможет
+          throw new Error("Failed to fetch (возможен CORS/блокировка браузером).");
+        }
+  
+        if (response.ok) {
+          const apiResponseText = String(
+            data?.candidates?.[0]?.content?.parts?.[0]?.text || ""
+          ).replace(/\*\*(.*?)\*\*/g, "$1").trim();
+  
+          const isEndSession = apiResponseText.includes("[END_SESSION]");
+          const cleanText = apiResponseText.replace("[END_SESSION]", "").trim();
+  
+          messagaElement.style.color = "";
+          messagaElement.innerText = cleanText;
+  
+          sendToSheet({
             type: "message",
             session_id: sessionId,
             seq: ++messageSeq,
@@ -162,36 +198,54 @@ const generateBotResponse = async (incomingMessageDiv) => {
             text: cleanText,
             created_at: formatDateTime()
           });
-          
-        if (isEndSession) {
+  
+          if (isEndSession) {
             sendToSheet({
-                type: "session_end",
-                session_id: sessionId,
-                ended_at: formatDateTime()
-              });
-              
+              type: "session_end",
+              session_id: sessionId,
+              ended_at: formatDateTime()
+            });
+  
             setTimeout(() => {
               mode = "post_anketa";
               postIndex = 0;
               addBotMessage("Перед завершением ответьте, пожалуйста, на несколько вопросов.");
-              updateFooterVisibility()
+              updateFooterVisibility();
               showNextQuestion();
             }, 700);
           }
-          
-    } catch (error){
-        // Handle error in API  response 
-        console.log(error);
-        messagaElement.innerText = error.message;
-        messagaElement.style.color = "#ff0000";
+  
+          return; // успех — выходим
+        }
+  
+        // лимит/квота => переключаем ключ и пробуем следующий
+        if (isQuotaError(response.status, data)) {
+          lastQuotaMessage = data?.error?.message || `HTTP ${response.status}`;
+          geminiKeyIndex = (geminiKeyIndex + 1) % Keys.length;
+  
+          // если ещё есть ключи — пробуем дальше
+          continue;
+        }
+  
+        // прочая ошибка — не крутим ключи, показываем ошибку
+        throw new Error(data?.error?.message || `HTTP ${response.status}`);
+      }
+  
+      // Все ключи уперлись в лимит
+      messagaElement.style.color = "#ff0000";
+      messagaElement.innerText =
+        "Лимит запросов исчерпан. Я переключила ключ, но сейчас все ключи в лимите. Повторите запрос позже.\n" +
+        (lastQuotaMessage ? `\n${lastQuotaMessage}` : "");
+    } catch (error) {
+      console.log(error);
+      messagaElement.style.color = "#ff0000";
+      messagaElement.innerText = error?.message || "Ошибка. Повторите запрос.";
     } finally {
-        // Reset users file data, removing thinking, scroll chat bottom
-        userData.file = {};
-        incomingMessageDiv.classList.remove("thinking");
-        chatBody.scrollTo({ top: chatBody.scrollHeight, behavior: "smooth" });
+      userData.file = {};
+      incomingMessageDiv.classList.remove("thinking");
+      chatBody.scrollTo({ top: chatBody.scrollHeight, behavior: "smooth" });
     }
-}
-
+  };
 
 
 // Handle outgoing user messages
